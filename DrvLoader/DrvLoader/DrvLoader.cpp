@@ -154,6 +154,11 @@ bool AppMain(
         // Install the service when it has not been installed yet
         if (!LoadDriver(serviceName, fullPath))
         {
+            if (::GetLastError() == ERROR_INVALID_PARAMETER)
+            {
+                std::cout << "the driver was executed and unloaded." << std::endl;
+                return true;
+            }
             PrintErrorMessage("LoadDriver failed");
             return false;
         }
