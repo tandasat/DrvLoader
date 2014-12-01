@@ -18,6 +18,8 @@
 
 
 // Original headers
+#include "../Common/scope_guard.h"
+#include "../Common/unique_resource.h"
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -54,20 +56,4 @@
 //
 // implementations
 //
-
-template<class T> inline
-std::unique_ptr<T> make_unique_ptr(
-__in T* p)
-{
-    return std::unique_ptr<T>(p);
-}
-
-
-template<class T, class D> inline
-std::unique_ptr<T, D> make_unique_ptr(
-__in T* p,
-__in D d = D())
-{
-    return std::unique_ptr<T, D>(p, std::forward<D>(d));
-}
 

@@ -172,8 +172,8 @@ bool AppMain(
 bool IsServiceInstalled(
     __in LPCTSTR ServiceName)
 {
-    auto scmHandle = make_unique_ptr(
-        ::OpenSCManager(nullptr, nullptr, GENERIC_READ), &::CloseServiceHandle);
+    auto scmHandle = std::experimental::unique_resource(
+        ::OpenSCManager(nullptr, nullptr, GENERIC_READ), ::CloseServiceHandle);
     return (FALSE != ::CloseServiceHandle(
         ::OpenService(scmHandle.get(), ServiceName, GENERIC_READ)));
 }
@@ -202,7 +202,8 @@ bool LoadDriver(
         return false;
     }
 
-    auto key = make_unique_ptr(keyNative, &::RegCloseKey);
+    auto key = std::experimental::unique_resource(std::move(keyNative), 
+                                                  ::RegCloseKey);
     if (ERROR_SUCCESS != ::RegSetValueEx(key.get(), _T("DefaultInstance"), 0,
         REG_SZ, reinterpret_cast<const BYTE*>(INSTANCE_NAME_T),
         sizeof(INSTANCE_NAME_T)))
@@ -224,7 +225,8 @@ bool LoadDriver(
         return false;
     }
 
-    auto keySub = make_unique_ptr(keySubNative, &::RegCloseKey);
+    auto keySub = std::experimental::unique_resource(std::move(keySubNative), 
+                                                     ::RegCloseKey);
     if (ERROR_SUCCESS != ::RegSetValueEx(keySub.get(), _T("Altitude"), 0,
         REG_SZ, reinterpret_cast<const BYTE*>(ALTITUDE), sizeof(ALTITUDE)))
     {
@@ -238,20 +240,19 @@ bool LoadDriver(
         return false;
     }
 
-    auto scmHandle = make_unique_ptr(::OpenSCManager(nullptr, nullptr,
-        SC_MANAGER_CREATE_SERVICE), &CloseServiceHandle);
+    auto scmHandle = std::experimental::unique_resource(::OpenSCManager(
+        nullptr, nullptr, SC_MANAGER_CREATE_SERVICE), ::CloseServiceHandle);
     if (!scmHandle)
     {
         return false;
     }
 
-    auto serviceHandle = make_unique_ptr(
+    auto serviceHandle = std::experimental::unique_resource(
         ::CreateService(scmHandle.get(), ServiceName, ServiceName,
         SERVICE_ALL_ACCESS, SERVICE_FILE_SYSTEM_DRIVER,
         SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, DriverFile,
         _T("FSFilter Activity Monitor"), nullptr, _T("FltMgr"), nullptr,
-        nullptr),
-        &CloseServiceHandle);
+        nullptr), ::CloseServiceHandle);
     if (!serviceHandle)
     {
         return false;
@@ -285,16 +286,16 @@ bool LoadDriver(
 bool UnloadDriver(
     __in LPCTSTR ServiceName)
 {
-    auto scmHandle = make_unique_ptr(::OpenSCManager(nullptr, nullptr,
-        SC_MANAGER_CONNECT), &CloseServiceHandle);
+    auto scmHandle = std::experimental::unique_resource(::OpenSCManager(
+        nullptr, nullptr, SC_MANAGER_CONNECT), ::CloseServiceHandle);
     if (!scmHandle)
     {
         return false;
     }
 
-    auto serviceHandle = make_unique_ptr(::OpenService(scmHandle.get(),
-        ServiceName, DELETE | SERVICE_STOP | SERVICE_QUERY_STATUS),
-        &CloseServiceHandle);
+    auto serviceHandle = std::experimental::unique_resource(::OpenService(
+        scmHandle.get(), ServiceName, 
+        DELETE | SERVICE_STOP | SERVICE_QUERY_STATUS), ::CloseServiceHandle);
     if (!serviceHandle)
     {
         return false;
@@ -339,27 +340,28 @@ void PrintErrorMessage(
 std::string GetErrorMessage(
     __in DWORD ErrorCode)
 {
-    char* message = nullptr;
+    char* messageNaked = nullptr;
     if (!::FormatMessageA(
         FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, nullptr,
-        ErrorCode, LANG_USER_DEFAULT, reinterpret_cast<LPSTR>(&message), 0,
-        nullptr))
+        ErrorCode, LANG_USER_DEFAULT, reinterpret_cast<LPSTR>(&messageNaked), 
+        0, nullptr))
     {
         return "";
     }
-    auto scoped = make_unique_ptr(message, &::LocalFree);
+    auto message = std::experimental::unique_resource(std::move(messageNaked),
+                                                     ::LocalFree);
 
-    const auto length = ::strlen(message);
+    const auto length = ::strlen(message.get());
     if (!length)
     {
         return "";
     }
 
-    if (message[length - 2] == '\r')
+    if (message.get()[length - 2] == '\r')
     {
-        message[length - 2] = '\0';
+        message.get()[length - 2] = '\0';
     }
-    return message;
+    return message.get();
 }
 
 

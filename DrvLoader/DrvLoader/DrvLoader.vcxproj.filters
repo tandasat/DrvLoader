@@ -13,6 +13,9 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Header Files\../Common">
+      <UniqueIdentifier>{cb9ca226-89ca-4a8f-8b30-3a6685dc6d9a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -20,6 +23,12 @@
     </ClInclude>
     <ClInclude Include="targetver.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\scope_guard.h">
+      <Filter>Header Files\../Common</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\unique_resource.h">
+      <Filter>Header Files\../Common</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
