@@ -39,6 +39,8 @@
 namespace {
 
 
+void Usage();
+
 bool AppMain(
     __in int Argc,
     __in TCHAR* const Argv[]);
@@ -47,6 +49,15 @@ bool IsServiceInstalled(
     __in LPCTSTR ServiceName);
 
 bool LoadDriver(
+    __in LPCTSTR ServiceName,
+    __in LPCTSTR DriverFile,
+    __in bool IsFilterDriver);
+
+SC_HANDLE LoadStandardDriver(
+    __in LPCTSTR ServiceName,
+    __in LPCTSTR DriverFile);
+
+SC_HANDLE LoadFilterDriver(
     __in LPCTSTR ServiceName,
     __in LPCTSTR DriverFile);
 
@@ -99,20 +110,43 @@ int _tmain(int argc, _TCHAR* argv[])
 namespace {
 
 
+void Usage()
+{
+    std::cout
+        << "usage:\n"
+        << "    >DrvLoader.exe [--filter | -F] <DriverFile>\n"
+        << std::endl;
+}
+
+
 bool AppMain(
     __in int Argc,
     __in TCHAR* const Argv[])
 {
-    if (Argc != 2)
+    if (Argc == 1)
     {
-        std::cout
-            << "usage:\n"
-            << "    >DrvLoader.exe <DriverFile>\n"
-            << std::endl;
+        Usage();
         return false;
     }
 
-    const auto driverName = Argv[1];
+    auto isFilterDriver = false;
+    auto index = 1;
+    if (Argc == 3)
+    {
+        const std::basic_string<TCHAR> param = Argv[index++];
+        if (param == _T("--filter") ||
+            param == _T("-F") ||
+            param == _T("/F"))
+        {
+            isFilterDriver = true;
+        }
+        else
+        {
+            Usage();
+            return false;
+        }
+    }
+    const auto driverName = Argv[index];
 
     TCHAR fullPath[MAX_PATH];
     if (!::PathSearchAndQualify(driverName, fullPath, _countof(fullPath)))
@@ -147,12 +181,12 @@ bool AppMain(
             PrintErrorMessage("UnloadDriver failed");
             return false;
         }
-        std::cout << "unload successfully" << std::endl;
+        std::cout << "Unloaded the driver successfully" << std::endl;
     }
     else
     {
         // Install the service when it has not been installed yet
-        if (!LoadDriver(serviceName, fullPath))
+        if (!LoadDriver(serviceName, fullPath, isFilterDriver))
         {
             if (::GetLastError() == ERROR_INVALID_PARAMETER)
             {
@@ -162,7 +196,7 @@ bool AppMain(
             PrintErrorMessage("LoadDriver failed");
             return false;
         }
-        std::cout << "load successfully" << std::endl;
+        std::cout << "Loaded the driver successfully" << std::endl;
     }
     return true;
 }
@@ -182,77 +216,12 @@ bool IsServiceInstalled(
 // Loads a driver file as a file system filter driver.
 bool LoadDriver(
     __in LPCTSTR ServiceName,
-    __in LPCTSTR DriverFile)
+    __in LPCTSTR DriverFile,
+    __in bool IsFilterDriver)
 {
-    static const TCHAR INSTANCE_NAME_T[] = _T("instance_name");
-    static const TCHAR ALTITUDE[] = _T("370040");
-
-    // Create registry values for a file system driver
-    TCHAR fsRegistry[260];
-    if (!SUCCEEDED(::StringCchPrintf(fsRegistry, _countof(fsRegistry),
-        _T("SYSTEM\\CurrentControlSet\\Services\\%s\\Instances"), ServiceName)))
-    {
-        return false;
-    }
-
-    HKEY keyNative = nullptr;
-    if (ERROR_SUCCESS != ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, fsRegistry, 0,
-        nullptr, 0, KEY_ALL_ACCESS, nullptr, &keyNative, nullptr))
-    {
-        return false;
-    }
-
-    auto key = std::experimental::unique_resource(std::move(keyNative), 
-                                                  ::RegCloseKey);
-    if (ERROR_SUCCESS != ::RegSetValueEx(key.get(), _T("DefaultInstance"), 0,
-        REG_SZ, reinterpret_cast<const BYTE*>(INSTANCE_NAME_T),
-        sizeof(INSTANCE_NAME_T)))
-    {
-        return false;
-    }
-
-    ::StringCchCat(fsRegistry, _countof(fsRegistry), _T("\\"));
-    if (!SUCCEEDED(::StringCchCat(fsRegistry, _countof(fsRegistry),
-        INSTANCE_NAME_T)))
-    {
-        return false;
-    }
-
-    HKEY keySubNative = nullptr;
-    if (ERROR_SUCCESS != ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, fsRegistry, 0,
-        nullptr, 0, KEY_ALL_ACCESS, nullptr, &keySubNative, nullptr))
-    {
-        return false;
-    }
-
-    auto keySub = std::experimental::unique_resource(std::move(keySubNative), 
-                                                     ::RegCloseKey);
-    if (ERROR_SUCCESS != ::RegSetValueEx(keySub.get(), _T("Altitude"), 0,
-        REG_SZ, reinterpret_cast<const BYTE*>(ALTITUDE), sizeof(ALTITUDE)))
-    {
-        return false;
-    }
-
-    DWORD regValue = 0;
-    if (ERROR_SUCCESS != ::RegSetValueEx(keySub.get(), _T("Flags"), 0,
-        REG_DWORD, reinterpret_cast<const BYTE*>(&regValue), sizeof(regValue)))
-    {
-        return false;
-    }
-
-    auto scmHandle = std::experimental::unique_resource(::OpenSCManager(
-        nullptr, nullptr, SC_MANAGER_CREATE_SERVICE), ::CloseServiceHandle);
-    if (!scmHandle)
-    {
-        return false;
-    }
-
+    auto loader = (IsFilterDriver) ? LoadFilterDriver : LoadStandardDriver;
     auto serviceHandle = std::experimental::unique_resource(
-        ::CreateService(scmHandle.get(), ServiceName, ServiceName,
-        SERVICE_ALL_ACCESS, SERVICE_FILE_SYSTEM_DRIVER,
-        SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, DriverFile,
-        _T("FSFilter Activity Monitor"), nullptr, _T("FltMgr"), nullptr,
-        nullptr), ::CloseServiceHandle);
+            loader(ServiceName, DriverFile), ::CloseServiceHandle);
     if (!serviceHandle)
     {
         return false;
@@ -279,6 +248,102 @@ bool LoadDriver(
         return false;
     }
     return true;
+}
+
+
+// Loads a driver file as a standard driver.
+SC_HANDLE LoadStandardDriver(
+    __in LPCTSTR ServiceName,
+    __in LPCTSTR DriverFile)
+{
+    auto scmHandle = std::experimental::unique_resource(::OpenSCManager(
+        nullptr, nullptr, SC_MANAGER_CREATE_SERVICE), ::CloseServiceHandle);
+    if (!scmHandle)
+    {
+        return false;
+    }
+
+    return ::CreateService(scmHandle.get(), ServiceName, ServiceName,
+                           SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
+                           SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, 
+                           DriverFile, nullptr, nullptr, nullptr, nullptr,
+                           nullptr);
+}
+
+
+// Loads a driver file as a file syste filter driver.
+SC_HANDLE LoadFilterDriver(
+    __in LPCTSTR ServiceName,
+    __in LPCTSTR DriverFile)
+{
+    static const TCHAR INSTANCE_NAME_T[] = _T("instance_name");
+    static const TCHAR ALTITUDE[] = _T("370040");
+
+    // Create registry values for a file system driver
+    TCHAR fsRegistry[260];
+    if (!SUCCEEDED(::StringCchPrintf(fsRegistry, _countof(fsRegistry),
+        _T("SYSTEM\\CurrentControlSet\\Services\\%s\\Instances"), ServiceName)))
+    {
+        return false;
+    }
+
+    HKEY keyNative = nullptr;
+    if (ERROR_SUCCESS != ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, fsRegistry, 0,
+        nullptr, 0, KEY_ALL_ACCESS, nullptr, &keyNative, nullptr))
+    {
+        return false;
+    }
+
+    auto key = std::experimental::unique_resource(std::move(keyNative),
+                                                  ::RegCloseKey);
+    if (ERROR_SUCCESS != ::RegSetValueEx(key.get(), _T("DefaultInstance"), 0,
+        REG_SZ, reinterpret_cast<const BYTE*>(INSTANCE_NAME_T),
+        sizeof(INSTANCE_NAME_T)))
+    {
+        return false;
+    }
+
+    ::StringCchCat(fsRegistry, _countof(fsRegistry), _T("\\"));
+    if (!SUCCEEDED(::StringCchCat(fsRegistry, _countof(fsRegistry),
+        INSTANCE_NAME_T)))
+    {
+        return false;
+    }
+
+    HKEY keySubNative = nullptr;
+    if (ERROR_SUCCESS != ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, fsRegistry, 0,
+        nullptr, 0, KEY_ALL_ACCESS, nullptr, &keySubNative, nullptr))
+    {
+        return false;
+    }
+
+    auto keySub = std::experimental::unique_resource(std::move(keySubNative),
+                                                     ::RegCloseKey);
+    if (ERROR_SUCCESS != ::RegSetValueEx(keySub.get(), _T("Altitude"), 0,
+        REG_SZ, reinterpret_cast<const BYTE*>(ALTITUDE), sizeof(ALTITUDE)))
+    {
+        return false;
+    }
+
+    DWORD regValue = 0;
+    if (ERROR_SUCCESS != ::RegSetValueEx(keySub.get(), _T("Flags"), 0,
+        REG_DWORD, reinterpret_cast<const BYTE*>(&regValue), sizeof(regValue)))
+    {
+        return false;
+    }
+
+    auto scmHandle = std::experimental::unique_resource(::OpenSCManager(
+        nullptr, nullptr, SC_MANAGER_CREATE_SERVICE), ::CloseServiceHandle);
+    if (!scmHandle)
+    {
+        return false;
+    }
+
+    return ::CreateService(scmHandle.get(), ServiceName, ServiceName,
+                           SERVICE_ALL_ACCESS, SERVICE_FILE_SYSTEM_DRIVER,
+                           SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, 
+                           DriverFile, _T("FSFilter Activity Monitor"), 
+                           nullptr, _T("FltMgr"), nullptr, nullptr);
 }
 
 
