@@ -1,434 +1,346 @@
+// Copyright (c) 2015, tandasat. All rights reserved.
+// Use of this source code is governed by a MIT-style license that can be
+// found in the LICENSE file.
+
 #include "stdafx.h"
-
-
-#define _CRTDBG_MAP_ALLOC
-#include <stdlib.h>
-#include <crtdbg.h>
-
 
 // C/C++ standard headers
 // Other external headers
 // Windows headers
 // Original headers
 
+namespace stdexp = std::experimental;
 
 ////////////////////////////////////////////////////////////////////////////////
 //
 // macro utilities
 //
 
-
 ////////////////////////////////////////////////////////////////////////////////
 //
 // constants and macros
 //
-
 
 ////////////////////////////////////////////////////////////////////////////////
 //
 // types
 //
 
-
 ////////////////////////////////////////////////////////////////////////////////
 //
 // prototypes
 //
 
-
 namespace {
-
 
 void Usage();
 
-bool AppMain(
-    __in int Argc,
-    __in TCHAR* const Argv[]);
+bool AppMain(_In_ int Argc, _In_ TCHAR* const Argv[]);
 
-bool IsServiceInstalled(
-    __in LPCTSTR ServiceName);
+bool IsServiceInstalled(_In_ LPCTSTR ServiceName);
 
-bool LoadDriver(
-    __in LPCTSTR ServiceName,
-    __in LPCTSTR DriverFile,
-    __in bool IsFilterDriver);
+bool LoadDriver(_In_ LPCTSTR ServiceName, _In_ LPCTSTR DriverFile,
+                _In_ bool IsFilterDriver);
 
-SC_HANDLE LoadStandardDriver(
-    __in LPCTSTR ServiceName,
-    __in LPCTSTR DriverFile);
+SC_HANDLE LoadStandardDriver(_In_ LPCTSTR ServiceName, _In_ LPCTSTR DriverFile);
 
-SC_HANDLE LoadFilterDriver(
-    __in LPCTSTR ServiceName,
-    __in LPCTSTR DriverFile);
+SC_HANDLE LoadFilterDriver(_In_ LPCTSTR ServiceName, _In_ LPCTSTR DriverFile);
 
-bool UnloadDriver(
-    __in LPCTSTR ServiceName);
+bool UnloadDriver(_In_ LPCTSTR ServiceName);
 
-void PrintErrorMessage(
-    __in const char* Message);
+void PrintErrorMessage(_In_ const char* Message);
 
-std::string GetErrorMessage(
-    __in DWORD ErrorCode);
+std::string GetErrorMessage(_In_ DWORD ErrorCode);
 
-
-} // End of namespace {unnamed}
-
+}  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
 //
 // variables
 //
 
-
 ////////////////////////////////////////////////////////////////////////////////
 //
 // implementations
 //
 
-int _tmain(int argc, _TCHAR* argv[])
-{
-    int result = EXIT_FAILURE;
-    try
-    {
-        if (AppMain(argc, argv))
-        {
-            result = EXIT_SUCCESS;
-        }
+int _tmain(int argc, _TCHAR* argv[]) {
+  int result = EXIT_FAILURE;
+  try {
+    if (AppMain(argc, argv)) {
+      result = EXIT_SUCCESS;
     }
-    catch (std::exception& e)
-    {
-        std::cout << e.what() << std::endl;
-    }
-    catch (...)
-    {
-        std::cout << "Unknown Exception." << std::endl;
-    }
-    return result;
+  } catch (std::exception& e) {
+    std::cout << e.what() << std::endl;
+  } catch (...) {
+    std::cout << "Unknown Exception." << std::endl;
+  }
+  return result;
 }
-
 
 namespace {
 
-
-void Usage()
-{
-    std::cout
-        << "usage:\n"
-        << "    >DrvLoader.exe [--filter | -F] <DriverFile>\n"
-        << std::endl;
+void Usage() {
+  std::cout << "usage:\n"
+            << "    >DrvLoader.exe [--filter | -F] <DriverFile>\n" << std::endl;
 }
 
+bool AppMain(_In_ int Argc, _In_ TCHAR* const Argv[]) {
+  if (Argc == 1) {
+    Usage();
+    return false;
+  }
 
-bool AppMain(
-    __in int Argc,
-    __in TCHAR* const Argv[])
-{
-    if (Argc == 1)
-    {
-        Usage();
-        return false;
+  auto isFilterDriver = false;
+  auto index = 1;
+  if (Argc == 3) {
+    const std::basic_string<TCHAR> param = Argv[index++];
+    if (param == _T("--filter") || param == _T("-F") || param == _T("/F")) {
+      isFilterDriver = true;
+    } else {
+      Usage();
+      return false;
     }
+  }
+  const auto driverName = Argv[index];
 
-    auto isFilterDriver = false;
-    auto index = 1;
-    if (Argc == 3)
-    {
-        const std::basic_string<TCHAR> param = Argv[index++];
-        if (param == _T("--filter") ||
-            param == _T("-F") ||
-            param == _T("/F"))
-        {
-            isFilterDriver = true;
-        }
-        else
-        {
-            Usage();
-            return false;
-        }
-    }
-    const auto driverName = Argv[index];
+  TCHAR fullPath[MAX_PATH];
+  if (!::PathSearchAndQualify(driverName, fullPath, _countof(fullPath))) {
+    PrintErrorMessage("PathSearchAndQualify failed");
+    return false;
+  }
 
-    TCHAR fullPath[MAX_PATH];
-    if (!::PathSearchAndQualify(driverName, fullPath, _countof(fullPath)))
-    {
-        PrintErrorMessage("PathSearchAndQualify failed");
-        return false;
-    }
+  if (!::PathFileExists(fullPath)) {
+    PrintErrorMessage("PathFileExists failed");
+    return false;
+  }
 
-    if (!::PathFileExists(fullPath))
-    {
-        PrintErrorMessage("PathFileExists failed");
-        return false;
-    }
+  // Create a service name
+  TCHAR serviceName[MAX_PATH];
+  if (!SUCCEEDED(
+          ::StringCchCopy(serviceName, _countof(serviceName), fullPath))) {
+    PrintErrorMessage("StringCchCopy failed");
+    return false;
+  }
 
-    // Create a service name
-    TCHAR serviceName[MAX_PATH];
-    if (!SUCCEEDED(::StringCchCopy(serviceName, _countof(serviceName),
-        fullPath)))
-    {
-        PrintErrorMessage("StringCchCopy failed");
-        return false;
-    }
+  ::PathRemoveExtension(serviceName);
+  ::PathStripPath(serviceName);
 
-    ::PathRemoveExtension(serviceName);
-    ::PathStripPath(serviceName);
-
-    if (IsServiceInstalled(serviceName))
-    {
-        // Uninstall the service when it has already been installed
-        if (!UnloadDriver(serviceName))
-        {
-            PrintErrorMessage("UnloadDriver failed");
-            return false;
-        }
-        std::cout << "Unloaded the driver successfully" << std::endl;
+  if (IsServiceInstalled(serviceName)) {
+    // Uninstall the service when it has already been installed
+    if (!UnloadDriver(serviceName)) {
+      PrintErrorMessage("UnloadDriver failed");
+      return false;
     }
-    else
-    {
-        // Install the service when it has not been installed yet
-        if (!LoadDriver(serviceName, fullPath, isFilterDriver))
-        {
-            if (::GetLastError() == ERROR_INVALID_PARAMETER)
-            {
-                std::cout << "the driver was executed and unloaded." << std::endl;
-                return true;
-            }
-            PrintErrorMessage("LoadDriver failed");
-            return false;
-        }
-        std::cout << "Loaded the driver successfully" << std::endl;
+    std::cout << "Unloaded the driver successfully" << std::endl;
+  } else {
+    // Install the service when it has not been installed yet
+    if (!LoadDriver(serviceName, fullPath, isFilterDriver)) {
+      if (::GetLastError() == ERROR_INVALID_PARAMETER) {
+        std::cout << "the driver was executed and unloaded." << std::endl;
+        return true;
+      }
+      PrintErrorMessage("LoadDriver failed");
+      return false;
     }
-    return true;
+    std::cout << "Loaded the driver successfully" << std::endl;
+  }
+  return true;
 }
-
 
 // Returns true when a specified service has been installed.
-bool IsServiceInstalled(
-    __in LPCTSTR ServiceName)
-{
-    auto scmHandle = std::experimental::unique_resource(
-        ::OpenSCManager(nullptr, nullptr, GENERIC_READ), ::CloseServiceHandle);
-    return (FALSE != ::CloseServiceHandle(
-        ::OpenService(scmHandle.get(), ServiceName, GENERIC_READ)));
+bool IsServiceInstalled(_In_ LPCTSTR ServiceName) {
+  const auto scmHandle = stdexp::make_unique_resource(
+      ::OpenSCManager(nullptr, nullptr, GENERIC_READ), &::CloseServiceHandle);
+  return (FALSE != ::CloseServiceHandle(::OpenService(
+                       scmHandle.get(), ServiceName, GENERIC_READ)));
 }
-
 
 // Loads a driver file as a file system filter driver.
-bool LoadDriver(
-    __in LPCTSTR ServiceName,
-    __in LPCTSTR DriverFile,
-    __in bool IsFilterDriver)
-{
-    auto loader = (IsFilterDriver) ? LoadFilterDriver : LoadStandardDriver;
-    auto serviceHandle = std::experimental::unique_resource(
-            loader(ServiceName, DriverFile), ::CloseServiceHandle);
-    if (!serviceHandle)
-    {
-        return false;
-    }
+bool LoadDriver(_In_ LPCTSTR ServiceName, _In_ LPCTSTR DriverFile,
+                _In_ bool IsFilterDriver) {
+  const auto loader = (IsFilterDriver) ? LoadFilterDriver : LoadStandardDriver;
+  const auto serviceHandle = stdexp::make_unique_resource(
+      loader(ServiceName, DriverFile), &::CloseServiceHandle);
+  if (!serviceHandle) {
+    return false;
+  }
 
-    // Start the service
-    SERVICE_STATUS status = {};
-    if (::StartService(serviceHandle.get(), 0, nullptr))
-    {
-        while (::QueryServiceStatus(serviceHandle.get(), &status))
-        {
-            if (status.dwCurrentState != SERVICE_START_PENDING)
-            {
-                break;
-            }
+  // Start the service
+  SERVICE_STATUS status = {};
+  if (::StartService(serviceHandle.get(), 0, nullptr)) {
+    while (::QueryServiceStatus(serviceHandle.get(), &status)) {
+      if (status.dwCurrentState != SERVICE_START_PENDING) {
+        break;
+      }
 
-            ::Sleep(500);
-        }
+      ::Sleep(500);
     }
+  }
 
-    if (status.dwCurrentState != SERVICE_RUNNING)
-    {
-        ::DeleteService(serviceHandle.get());
-        return false;
-    }
-    return true;
+  if (status.dwCurrentState != SERVICE_RUNNING) {
+    ::DeleteService(serviceHandle.get());
+    return false;
+  }
+  return true;
 }
-
 
 // Loads a driver file as a standard driver.
-SC_HANDLE LoadStandardDriver(
-    __in LPCTSTR ServiceName,
-    __in LPCTSTR DriverFile)
-{
-    auto scmHandle = std::experimental::unique_resource(::OpenSCManager(
-        nullptr, nullptr, SC_MANAGER_CREATE_SERVICE), ::CloseServiceHandle);
-    if (!scmHandle)
-    {
-        return false;
-    }
+SC_HANDLE LoadStandardDriver(_In_ LPCTSTR ServiceName,
+                             _In_ LPCTSTR DriverFile) {
+  const auto scmHandle = stdexp::make_unique_resource(
+      ::OpenSCManager(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE),
+      &::CloseServiceHandle);
+  if (!scmHandle) {
+    return false;
+  }
 
-    return ::CreateService(scmHandle.get(), ServiceName, ServiceName,
-                           SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
-                           SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, 
-                           DriverFile, nullptr, nullptr, nullptr, nullptr,
-                           nullptr);
+  return ::CreateService(scmHandle.get(), ServiceName, ServiceName,
+                         SERVICE_ALL_ACCESS, SERVICE_KERNEL_DRIVER,
+                         SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, DriverFile,
+                         nullptr, nullptr, nullptr, nullptr, nullptr);
 }
 
+// Loads a driver file as a mini-filter driver.
+SC_HANDLE LoadFilterDriver(_In_ LPCTSTR ServiceName, _In_ LPCTSTR DriverFile) {
+  // See MSDN 'Load Order Groups and Altitudes for Minifilter Drivers' for
+  // details of altitudes.
+  // https://msdn.microsoft.com/en-us/library/windows/hardware/ff549689%28v=vs.85%29.aspx
+  static const TCHAR ALTITUDE[] = _T("370000");
 
-// Loads a driver file as a file syste filter driver.
-SC_HANDLE LoadFilterDriver(
-    __in LPCTSTR ServiceName,
-    __in LPCTSTR DriverFile)
-{
-    static const TCHAR INSTANCE_NAME_T[] = _T("instance_name");
-    static const TCHAR ALTITUDE[] = _T("370040");
+  // Create registry values for a file system driver
+  TCHAR fsRegistry[260];
+  if (!SUCCEEDED(::StringCchPrintf(
+          fsRegistry, _countof(fsRegistry),
+          _T("SYSTEM\\CurrentControlSet\\Services\\%s\\Instances"),
+          ServiceName))) {
+    return false;
+  }
 
-    // Create registry values for a file system driver
-    TCHAR fsRegistry[260];
-    if (!SUCCEEDED(::StringCchPrintf(fsRegistry, _countof(fsRegistry),
-        _T("SYSTEM\\CurrentControlSet\\Services\\%s\\Instances"), ServiceName)))
-    {
-        return false;
-    }
+  HKEY key = nullptr;
+  if (ERROR_SUCCESS != ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, fsRegistry, 0,
+                                        nullptr, 0, KEY_ALL_ACCESS, nullptr,
+                                        &key, nullptr)) {
+    return false;
+  }
 
-    HKEY keyNative = nullptr;
-    if (ERROR_SUCCESS != ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, fsRegistry, 0,
-        nullptr, 0, KEY_ALL_ACCESS, nullptr, &keyNative, nullptr))
-    {
-        return false;
-    }
+  const auto valueSize = (::wcslen(ServiceName) + 1) * 2;
+  const auto scopedRegCloseKey =
+      stdexp::make_scope_exit([key] { ::RegCloseKey(key); });
+  if (ERROR_SUCCESS !=
+      ::RegSetValueEx(key, _T("DefaultInstance"), 0, REG_SZ,
+                      reinterpret_cast<const BYTE*>(ServiceName), valueSize)) {
+    return false;
+  }
 
-    auto key = std::experimental::unique_resource(std::move(keyNative),
-                                                  ::RegCloseKey);
-    if (ERROR_SUCCESS != ::RegSetValueEx(key.get(), _T("DefaultInstance"), 0,
-        REG_SZ, reinterpret_cast<const BYTE*>(INSTANCE_NAME_T),
-        sizeof(INSTANCE_NAME_T)))
-    {
-        return false;
-    }
+  ::StringCchCat(fsRegistry, _countof(fsRegistry), _T("\\"));
+  if (!SUCCEEDED(
+          ::StringCchCat(fsRegistry, _countof(fsRegistry), ServiceName))) {
+    return false;
+  }
 
-    ::StringCchCat(fsRegistry, _countof(fsRegistry), _T("\\"));
-    if (!SUCCEEDED(::StringCchCat(fsRegistry, _countof(fsRegistry),
-        INSTANCE_NAME_T)))
-    {
-        return false;
-    }
+  HKEY keySub = nullptr;
+  if (ERROR_SUCCESS != ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, fsRegistry, 0,
+                                        nullptr, 0, KEY_ALL_ACCESS, nullptr,
+                                        &keySub, nullptr)) {
+    return false;
+  }
+  const auto scopedRegCloseKey2 =
+      stdexp::make_scope_exit([keySub] { ::RegCloseKey(keySub); });
 
-    HKEY keySubNative = nullptr;
-    if (ERROR_SUCCESS != ::RegCreateKeyEx(HKEY_LOCAL_MACHINE, fsRegistry, 0,
-        nullptr, 0, KEY_ALL_ACCESS, nullptr, &keySubNative, nullptr))
-    {
-        return false;
-    }
+  if (ERROR_SUCCESS != ::RegSetValueEx(keySub, _T("Altitude"), 0, REG_SZ,
+                                       reinterpret_cast<const BYTE*>(ALTITUDE),
+                                       sizeof(ALTITUDE))) {
+    return false;
+  }
 
-    auto keySub = std::experimental::unique_resource(std::move(keySubNative),
-                                                     ::RegCloseKey);
-    if (ERROR_SUCCESS != ::RegSetValueEx(keySub.get(), _T("Altitude"), 0,
-        REG_SZ, reinterpret_cast<const BYTE*>(ALTITUDE), sizeof(ALTITUDE)))
-    {
-        return false;
-    }
+  DWORD regValue = 0;
+  if (ERROR_SUCCESS != ::RegSetValueEx(keySub, _T("Flags"), 0, REG_DWORD,
+                                       reinterpret_cast<const BYTE*>(&regValue),
+                                       sizeof(regValue))) {
+    return false;
+  }
 
-    DWORD regValue = 0;
-    if (ERROR_SUCCESS != ::RegSetValueEx(keySub.get(), _T("Flags"), 0,
-        REG_DWORD, reinterpret_cast<const BYTE*>(&regValue), sizeof(regValue)))
-    {
-        return false;
-    }
+  const auto scmHandle = stdexp::make_unique_resource(
+      ::OpenSCManager(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE),
+      &::CloseServiceHandle);
+  if (!scmHandle) {
+    return false;
+  }
 
-    auto scmHandle = std::experimental::unique_resource(::OpenSCManager(
-        nullptr, nullptr, SC_MANAGER_CREATE_SERVICE), ::CloseServiceHandle);
-    if (!scmHandle)
-    {
-        return false;
-    }
-
-    return ::CreateService(scmHandle.get(), ServiceName, ServiceName,
-                           SERVICE_ALL_ACCESS, SERVICE_FILE_SYSTEM_DRIVER,
-                           SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, 
-                           DriverFile, _T("FSFilter Activity Monitor"), 
-                           nullptr, _T("FltMgr"), nullptr, nullptr);
+  return ::CreateService(scmHandle.get(), ServiceName, ServiceName,
+                         SERVICE_ALL_ACCESS, SERVICE_FILE_SYSTEM_DRIVER,
+                         SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, DriverFile,
+                         _T("FSFilter Activity Monitor"), nullptr, _T("FltMgr"),
+                         nullptr, nullptr);
 }
-
 
 // Unloads a driver and deletes its service.
-bool UnloadDriver(
-    __in LPCTSTR ServiceName)
-{
-    auto scmHandle = std::experimental::unique_resource(::OpenSCManager(
-        nullptr, nullptr, SC_MANAGER_CONNECT), ::CloseServiceHandle);
-    if (!scmHandle)
-    {
-        return false;
+bool UnloadDriver(_In_ LPCTSTR ServiceName) {
+  const auto scmHandle = stdexp::make_unique_resource(
+      ::OpenSCManager(nullptr, nullptr, SC_MANAGER_CONNECT),
+      &::CloseServiceHandle);
+  if (!scmHandle) {
+    return false;
+  }
+
+  const auto serviceHandle = stdexp::make_unique_resource(
+      ::OpenService(scmHandle.get(), ServiceName,
+                    DELETE | SERVICE_STOP | SERVICE_QUERY_STATUS),
+      &::CloseServiceHandle);
+  if (!serviceHandle) {
+    return false;
+  }
+
+  ::DeleteService(serviceHandle.get());
+
+  // Stop the service
+  SERVICE_STATUS status = {};
+  if (::ControlService(serviceHandle.get(), SERVICE_CONTROL_STOP, &status)) {
+    while (::QueryServiceStatus(serviceHandle.get(), &status)) {
+      if (status.dwCurrentState != SERVICE_START_PENDING) break;
+
+      Sleep(500);
     }
+  }
 
-    auto serviceHandle = std::experimental::unique_resource(::OpenService(
-        scmHandle.get(), ServiceName, 
-        DELETE | SERVICE_STOP | SERVICE_QUERY_STATUS), ::CloseServiceHandle);
-    if (!serviceHandle)
-    {
-        return false;
-    }
+  TCHAR fsRegistry[260];
+  if (SUCCEEDED(StringCchPrintf(fsRegistry, _countof(fsRegistry),
+                                _T("SYSTEM\\CurrentControlSet\\Services\\%s\\"),
+                                ServiceName))) {
+    ::SHDeleteKey(HKEY_LOCAL_MACHINE, fsRegistry);
+  }
 
-    ::DeleteService(serviceHandle.get());
-
-    // Stop the service
-    SERVICE_STATUS status = {};
-    if (::ControlService(serviceHandle.get(), SERVICE_CONTROL_STOP, &status))
-    {
-        while (::QueryServiceStatus(serviceHandle.get(), &status))
-        {
-            if (status.dwCurrentState != SERVICE_START_PENDING)
-                break;
-
-            Sleep(500);
-        }
-    }
-
-    TCHAR fsRegistry[260];
-    if (SUCCEEDED(StringCchPrintf(fsRegistry, _countof(fsRegistry),
-        _T("SYSTEM\\CurrentControlSet\\Services\\%s\\"), ServiceName)))
-    {
-        ::SHDeleteKey(HKEY_LOCAL_MACHINE, fsRegistry);
-    }
-
-    return (status.dwCurrentState == SERVICE_STOPPED);
+  return (status.dwCurrentState == SERVICE_STOPPED);
 }
 
-
-void PrintErrorMessage(
-    __in const char* Message)
-{
-    const auto errorCode = ::GetLastError();
-    const auto errorMessage = GetErrorMessage(errorCode);
-    ::fprintf_s(stderr, "%s : %lu(0x%p) : %s\n", Message, errorCode,
-        errorCode, errorMessage.c_str());
+void PrintErrorMessage(_In_ const char* Message) {
+  const auto errorCode = ::GetLastError();
+  const auto errorMessage = GetErrorMessage(errorCode);
+  ::fprintf_s(stderr, "%s : %lu(0x%p) : %s\n", Message, errorCode, errorCode,
+              errorMessage.c_str());
 }
 
+std::string GetErrorMessage(_In_ DWORD ErrorCode) {
+  char* message = nullptr;
+  if (!::FormatMessageA(
+          FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, nullptr,
+          ErrorCode, LANG_USER_DEFAULT, reinterpret_cast<LPSTR>(&message), 0,
+          nullptr)) {
+    return "";
+  }
+  const auto scopedLocalFree =
+      stdexp::make_scope_exit([message] { ::LocalFree(message); });
 
-std::string GetErrorMessage(
-    __in DWORD ErrorCode)
-{
-    char* messageNaked = nullptr;
-    if (!::FormatMessageA(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM, nullptr,
-        ErrorCode, LANG_USER_DEFAULT, reinterpret_cast<LPSTR>(&messageNaked), 
-        0, nullptr))
-    {
-        return "";
-    }
-    auto message = std::experimental::unique_resource(std::move(messageNaked),
-                                                     ::LocalFree);
+  const auto length = ::strlen(message);
+  if (!length) {
+    return "";
+  }
 
-    const auto length = ::strlen(message.get());
-    if (!length)
-    {
-        return "";
-    }
-
-    if (message.get()[length - 2] == '\r')
-    {
-        message.get()[length - 2] = '\0';
-    }
-    return message.get();
+  if (message[length - 2] == '\r') {
+    message[length - 2] = '\0';
+  }
+  return message;
 }
 
-
-} // End of namespace {unnamed}
-
+}  // namespace

@@ -16,6 +16,9 @@
     <Filter Include="Header Files\../Common">
       <UniqueIdentifier>{cb9ca226-89ca-4a8f-8b30-3a6685dc6d9a}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\../Common\ScopedResource">
+      <UniqueIdentifier>{e915a356-2feb-41ea-910d-0932d3a8b309}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="stdafx.h">
@@ -24,11 +27,11 @@
     <ClInclude Include="targetver.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\Common\scope_guard.h">
-      <Filter>Header Files\../Common</Filter>
+    <ClInclude Include="..\Common\ScopedResource\scope_exit.h">
+      <Filter>Header Files\../Common\ScopedResource</Filter>
     </ClInclude>
-    <ClInclude Include="..\Common\unique_resource.h">
-      <Filter>Header Files\../Common</Filter>
+    <ClInclude Include="..\Common\ScopedResource\unique_resource.h">
+      <Filter>Header Files\../Common\ScopedResource</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
