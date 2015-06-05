@@ -163,6 +163,7 @@ bool LoadDriver(_In_ LPCTSTR ServiceName, _In_ LPCTSTR DriverFile,
   const auto serviceHandle = stdexp::make_unique_resource(
       loader(ServiceName, DriverFile), &::CloseServiceHandle);
   if (!serviceHandle) {
+    PrintErrorMessage("LoadStandardDriver or LoadFilterDriver failed");
     return false;
   }
 
@@ -176,6 +177,8 @@ bool LoadDriver(_In_ LPCTSTR ServiceName, _In_ LPCTSTR DriverFile,
 
       ::Sleep(500);
     }
+  } else {
+    PrintErrorMessage("StartService failed");
   }
 
   if (status.dwCurrentState != SERVICE_RUNNING) {
