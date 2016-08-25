@@ -320,7 +320,7 @@ bool UnloadDriver(_In_ LPCTSTR ServiceName) {
 void PrintErrorMessage(_In_ const char* Message) {
   const auto errorCode = ::GetLastError();
   const auto errorMessage = GetErrorMessage(errorCode);
-  ::fprintf_s(stderr, "%s : %lu(0x%p) : %s\n", Message, errorCode, errorCode,
+  ::fprintf_s(stderr, "%s : %lu(0x%08x) : %s\n", Message, errorCode, errorCode,
               errorMessage.c_str());
 }
 
